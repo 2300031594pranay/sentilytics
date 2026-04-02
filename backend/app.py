@@ -14,17 +14,23 @@ CORS(app)
 # --------------------------------------------------
 # Load trained models
 # --------------------------------------------------
-model = joblib.load("model.pkl")  # Logistic Regression
+model = joblib.load("model.pkl")
 vectorizer = joblib.load("vectorizer.pkl")
 
-# ✅ Load Naive Bayes model safely
+# Optional Naive Bayes
 try:
     naive_model = joblib.load("naive_model.pkl")
 except:
-    naive_model = None  # fallback if not available
+    naive_model = None
 
-nltk.download("stopwords")
-stop_words = set(stopwords.words("english"))
+# --------------------------------------------------
+# Safe NLTK setup (IMPORTANT for deployment)
+# --------------------------------------------------
+try:
+    stop_words = set(stopwords.words("english"))
+except:
+    nltk.download("stopwords")
+    stop_words = set(stopwords.words("english"))
 
 # Keep negation words
 NEGATION_WORDS = {"not", "no", "nor", "never", "nothing", "neither", "n't"}
@@ -32,7 +38,7 @@ NEGATION_WORDS = {"not", "no", "nor", "never", "nothing", "neither", "n't"}
 for w in NEGATION_WORDS:
     stop_words.discard(w)
 
-# Words we don’t want to highlight
+# Neutral words (ignore in explanation)
 NEUTRAL_WORDS = {
     "movie", "film", "movies", "films", "story", "plot",
     "character", "characters", "scene", "scenes", "acting",
@@ -40,7 +46,7 @@ NEUTRAL_WORDS = {
 }
 
 # --------------------------------------------------
-# Clean Text
+# Clean Text Function
 # --------------------------------------------------
 def clean_text(text):
     text = text.lower()
@@ -65,6 +71,13 @@ def clean_text(text):
     return " ".join(new_words)
 
 # --------------------------------------------------
+# Home Route (for testing)
+# --------------------------------------------------
+@app.route("/")
+def home():
+    return "Flask backend is running 🚀"
+
+# --------------------------------------------------
 # Prediction Route
 # --------------------------------------------------
 @app.route("/predict", methods=["POST"])
@@ -79,20 +92,17 @@ def predict():
     cleaned = clean_text(text)
     vectorized = vectorizer.transform([cleaned])
 
-    # --------------------------------------------------
-    # Model Selection
-    # --------------------------------------------------
+    # Model selection
     if model_type == "logistic":
         selected_model = model
     elif model_type == "naive" and naive_model is not None:
         selected_model = naive_model
     else:
-        selected_model = model  # fallback
+        selected_model = model
 
     prediction = selected_model.predict(vectorized)[0]
     probabilities = selected_model.predict_proba(vectorized)[0]
 
-    # 3-Class Mapping
     label_map = {
         0: "Negative",
         1: "Neutral",
@@ -103,7 +113,7 @@ def predict():
     confidence = float(max(probabilities)) * 100
 
     # --------------------------------------------------
-    # Explainability Logic (FIXED)
+    # Explainability
     # --------------------------------------------------
     feature_names = vectorizer.get_feature_names_out()
     classes = selected_model.classes_
@@ -116,7 +126,6 @@ def predict():
 
     _, nonzero_indices = vectorized.nonzero()
 
-    # ✅ FIX: Handle models differently
     if hasattr(selected_model, "coef_"):
         coefficients = selected_model.coef_
 
@@ -136,7 +145,7 @@ def predict():
                 negative_words_found.append(base_word)
 
     else:
-        # ✅ For Naive Bayes → skip word weighting (no crash)
+        # For Naive Bayes fallback
         for idx in nonzero_indices:
             token = feature_names[idx]
             base_word = token[4:] if token.startswith("NOT_") else token
@@ -144,7 +153,6 @@ def predict():
             if base_word.lower() in NEUTRAL_WORDS:
                 continue
 
-            # Simple fallback (just collect words)
             positive_words_found.append(base_word)
 
     return jsonify({
@@ -156,7 +164,7 @@ def predict():
     })
 
 # --------------------------------------------------
-# Training Route
+# Training Route (Optional - may fail on cloud)
 # --------------------------------------------------
 @app.route("/train", methods=["POST"])
 def train():
@@ -208,7 +216,8 @@ def train():
         return jsonify({"ok": False, "logs": [], "error": str(e)}), 500
 
 # --------------------------------------------------
-# Run App
+# Run App (IMPORTANT FIX)
 # --------------------------------------------------
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
